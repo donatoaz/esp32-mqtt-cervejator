@@ -27,7 +27,7 @@
 
 #include "esp_event_loop.h"
 #include "esp_log.h"
-#include <esp_mqtt.h>
+#include "esp_mqtt.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 
@@ -35,16 +35,24 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "ds18b20.h"
 
 // Define the GPIO pin (will be used shortly) and the wireless network's SSID
 // and passphrase. To configure these values, run 'make menuconfig'.
-#define BLINK_GPIO CONFIG_BLINK_GPIO
-#define WIFI_SSID  CONFIG_WIFI_SSID
-#define WIFI_PASS  CONFIG_WIFI_PASS
+#define SENSOR_GPIO CONFIG_SENSOR_GPIO
+//#define SENSOR_WRITE_KEY CONFIG_SENSOR_WRITE_KEY
+#define SENSOR_WRITE_KEY "sensor/p9f7VtS4_QLE9kfxD-46iQ"
+//#define ACTUATOR_GPIO CONFIG_ACTUATOR_GPIO
+#define ACTUATOR_GPIO 5
+//#define WIFI_SSID  CONFIG_WIFI_SSID
+//#define WIFI_PASS  CONFIG_WIFI_PASS
+#define WIFI_SSID  "FactaTI"
+#define WIFI_PASS  "F@ct@_T!"
 
 // Define the MQTT Broker's hostname, port, username and passphrase. To
 // configure these values, run 'make menuconfig'.
-#define MQTT_HOST CONFIG_MQTT_BROKER
+// #define MQTT_HOST CONFIG_MQTT_BROKER
+#define MQTT_HOST "35.231.183.84" 
 #define MQTT_PORT CONFIG_MQTT_PORT
 #define MQTT_USER CONFIG_MQTT_USER
 #define MQTT_PASS CONFIG_MQTT_PASS
@@ -54,6 +62,8 @@ static EventGroupHandle_t wifi_event_group = NULL;
 static TaskHandle_t task = NULL;
 
 const int CONNECTED_BIT = BIT0;
+
+static const char* TAG = "MQTT-ESP32";
 
 
 /* ************************************************************************* *
@@ -120,14 +130,11 @@ initialize_nvs(void)
 void
 initialize_gpio(void)
 {
-    gpio_pad_select_gpio(BLINK_GPIO);
+  // setting actuator output
+  gpio_pad_select_gpio(ACTUATOR_GPIO);
+  gpio_set_direction(ACTUATOR_GPIO, GPIO_MODE_OUTPUT);
 
-    // Set the GPIO as a push/pull output
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
-
-    // Set the state of the pin to HIGH initially, as we're driving our LED in
-    // an active-low configuration.
-    gpio_set_level(BLINK_GPIO, 1);
+  ds18b20_init(14);
 }
 
 
@@ -143,13 +150,17 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
     switch (event->event_id)
     {
     case SYSTEM_EVENT_STA_START:
+        ESP_LOGI(TAG, "System started, going to connect to wifi.");
         wifi_connect();
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
+        ESP_LOGI(TAG, "Got an IP address, going to connect to MQTT broker. %s : %d, user: %s, pass: %s", 
+            MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS);
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-        esp_mqtt_start(MQTT_HOST, MQTT_PORT, "esp-mqtt", MQTT_USER, MQTT_PASS);
+        esp_mqtt_start(MQTT_HOST, MQTT_PORT, "esp-mqtt", "", "");
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
+        ESP_LOGI(TAG, "WiFi connection lost, stopping MQTTT and going to attempt a reconnect.");
         esp_mqtt_stop();
         esp_wifi_connect();
         xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
@@ -169,12 +180,24 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
 static void
 process(void *p)
 {
-    static const char *payload = "world";
+    char payload[10] = {0};
+    float value = 0;
+    
+    for (;;) {
+        value = ds18b20_get_temp();
+        int ret = snprintf(payload, sizeof payload, "%f", value);
 
-    for ( ;; )
-    {
-        esp_mqtt_publish("hello", (void *)payload, (int)strlen(payload), 0, false);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (ret < 0) {
+            ESP_LOGE(TAG, "Conversion of float to char failed!, %f", value);
+            return; // EXIT_FAILURE;
+        }
+        if (ret >= sizeof payload) {
+            ESP_LOGE(TAG, "Conversion of float to char failed because buffer is too small!, %f", value);
+            return;
+        }
+
+        esp_mqtt_publish(SENSOR_WRITE_KEY, (void *)payload, 10, 0, false);
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -189,12 +212,12 @@ mqtt_status_cb(esp_mqtt_status_t status)
     switch (status)
     {
     case ESP_MQTT_STATUS_CONNECTED:
-        gpio_set_level(BLINK_GPIO, 0);
-        esp_mqtt_subscribe("hello", 0);
-        xTaskCreatePinnedToCore(process, "process", 1024, NULL, 10, &task, 1);
+        ESP_LOGI(TAG, "Cool, we got a CONNECT ACK from broker!");
+        esp_mqtt_subscribe("actuator/VfK_25P4B2Ju4jym5yKeQA", 0);
+        xTaskCreatePinnedToCore(process, "process", 8192, NULL, 10, &task, 1);
         break;
     case ESP_MQTT_STATUS_DISCONNECTED:
-        gpio_set_level(BLINK_GPIO, 1);
+        ESP_LOGI(TAG, "Shoot, MQTT disconnected! Stopping publishing task.");
         vTaskDelete(task);
         break;
     }
@@ -209,6 +232,16 @@ static void
 mqtt_message_cb(const char *topic, uint8_t *payload, size_t len)
 {
     printf("incoming\t%s:%s (%d)\n", topic, payload, (int)len);
+    if (strcmp((char *) payload,"on") == 0) {
+      ESP_LOGI(TAG, "Setting pin %d to high", ACTUATOR_GPIO);
+      gpio_set_level(ACTUATOR_GPIO, 1);
+    } else if (strcmp((char *) payload, "off") == 0) {
+      ESP_LOGI(TAG, "Setting pin %d to low", ACTUATOR_GPIO);
+      gpio_set_level(ACTUATOR_GPIO, 0);
+    } else {
+      ESP_LOGI(TAG, "Received an unknown actuator command");
+    } 
+
 }
 
 
