@@ -41,7 +41,8 @@
 // and passphrase. To configure these values, run 'make menuconfig'.
 #define SENSOR_GPIO CONFIG_SENSOR_GPIO
 //#define SENSOR_WRITE_KEY CONFIG_SENSOR_WRITE_KEY
-#define SENSOR_WRITE_KEY "sensor/p9f7VtS4_QLE9kfxD-46iQ"
+#define SENSOR_WRITE_KEY "sensor/RgQCqJStIMDwd2SQ_Onktg"
+#define ACTUATOR_WRITE_KEY "actuator/USy53ARrqXqu8cr-jcYvAQ"
 //#define ACTUATOR_GPIO CONFIG_ACTUATOR_GPIO
 #define ACTUATOR_GPIO 5
 //#define WIFI_SSID  CONFIG_WIFI_SSID
@@ -52,7 +53,7 @@
 // Define the MQTT Broker's hostname, port, username and passphrase. To
 // configure these values, run 'make menuconfig'.
 // #define MQTT_HOST CONFIG_MQTT_BROKER
-#define MQTT_HOST "35.231.183.84" 
+#define MQTT_HOST "35.231.216.221" 
 #define MQTT_PORT CONFIG_MQTT_PORT
 #define MQTT_USER CONFIG_MQTT_USER
 #define MQTT_PASS CONFIG_MQTT_PASS
@@ -213,7 +214,7 @@ mqtt_status_cb(esp_mqtt_status_t status)
     {
     case ESP_MQTT_STATUS_CONNECTED:
         ESP_LOGI(TAG, "Cool, we got a CONNECT ACK from broker!");
-        esp_mqtt_subscribe("actuator/VfK_25P4B2Ju4jym5yKeQA", 0);
+        esp_mqtt_subscribe(ACTUATOR_WRITE_KEY, 0);
         xTaskCreatePinnedToCore(process, "process", 8192, NULL, 10, &task, 1);
         break;
     case ESP_MQTT_STATUS_DISCONNECTED:
